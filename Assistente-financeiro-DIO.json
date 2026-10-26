@@ -1,0 +1,334 @@
+{
+  "name": "Assistente-financeiro-DIO",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "listarclientes",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -304,
+        0
+      ],
+      "id": "a0e0145c-a58c-4e57-8317-02e67e9312c4",
+      "name": "Webhook",
+      "webhookId": "0ad51490-d5fb-4bf9-ac5e-76f5fa038544"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        944,
+        -32
+      ],
+      "id": "03fee647-1063-4591-95ca-95304a26134b",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "url": "https://digitalinnovationone.github.io/dio-lab-assistente-investimentos-rpa-n8n/data.csv",
+        "options": {
+          "response": {
+            "response": {}
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        -16,
+        0
+      ],
+      "id": "b2813283-7b60-4894-b0ad-6e7e335d7a3f",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        416,
+        -160
+      ],
+      "id": "64eeb69a-8010-45d4-ae9c-ed02ee3df96d",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst clientesEntrada = $(\"Webhook\").all();\nconst investimentosEntrada = $(\"Normalizando csv\").all();\n\n// 1. Procura clientes em qualquer nível do JSON\nconst clientesEncontrados = [];\n\nfunction extrairClientes(dado) {\n  if (Array.isArray(dado)) {\n    for (const elemento of dado) {\n      extrairClientes(elemento);\n    }\n    return;\n  }\n\n  if (!dado || typeof dado !== \"object\") return;\n\n  if (\n    dado.nome !== undefined &&\n    dado.email !== undefined &&\n    dado.saldo !== undefined &&\n    dado.perfil !== undefined\n  ) {\n    clientesEncontrados.push(dado);\n    return;\n  }\n\n  for (const valor of Object.values(dado)) {\n    if (valor && typeof valor === \"object\") {\n      extrairClientes(valor);\n    }\n  }\n}\n\nfor (const item of clientesEntrada) {\n  extrairClientes(item.json);\n}\n\n// 2. Remove clientes duplicados pelo e-mail\nconst clientes = [\n  ...new Map(\n    clientesEncontrados.map(cliente => [\n      cliente.email,\n      cliente\n    ])\n  ).values()\n];\n\n// 3. Extrai os investimentos normalizados\nconst investimentos = [];\n\nfunction extrairInvestimentos(dado) {\n  if (Array.isArray(dado)) {\n    for (const elemento of dado) {\n      extrairInvestimentos(elemento);\n    }\n    return;\n  }\n\n  if (!dado || typeof dado !== \"object\") return;\n\n  if (\n    dado.produto !== undefined &&\n    dado.perfil !== undefined &&\n    dado.minimo !== undefined\n  ) {\n    investimentos.push({\n      perfil: dado.perfil,\n      produto: dado.produto,\n      minimo: Number(dado.minimo),\n      rentabilidade: dado.rentabilidade\n    });\n    return;\n  }\n\n  for (const valor of Object.values(dado)) {\n    if (valor && typeof valor === \"object\") {\n      extrairInvestimentos(valor);\n    }\n  }\n}\n\nfor (const item of investimentosEntrada) {\n  extrairInvestimentos(item.json);\n}\n\n// 4. Valida as entradas\nif (clientes.length === 0) {\n  throw new Error(\n    \"Nenhum cliente encontrado. Confira a estrutura de saída do Webhook.\"\n  );\n}\n\nif (investimentos.length === 0) {\n  throw new Error(\n    \"Nenhum investimento encontrado. Confira a saída do nó Normalizando csv.\"\n  );\n}\n\n// 5. Gera as possibilidades de cada cliente\nreturn clientes.map(cliente => {\n  const saldoTexto = String(cliente.saldo ?? \"\")\n    .replace(/R\\$/gi, \"\")\n    .replace(/\\s/g, \"\")\n    .trim();\n\n  const saldo = Number(\n    saldoTexto.includes(\",\")\n      ? saldoTexto.replace(/\\./g, \"\").replace(\",\", \".\")\n      : saldoTexto\n  );\n\n  if (!Number.isFinite(saldo)) {\n    throw new Error(\n      `Saldo inválido para ${cliente.email}: ${cliente.saldo}`\n    );\n  }\n\n  const compativeis = investimentos.filter(inv =>\n    inv.perfil === cliente.perfil &&\n    Number.isFinite(inv.minimo) &&\n    inv.minimo <= saldo\n  );\n\n  const mensagens = compativeis.map(inv => ({\n    produto: inv.produto,\n    minimo: inv.minimo,\n    rentabilidade: inv.rentabilidade,\n    mensagem: `Olá ${cliente.nome}! Verificamos o seu perfil e, baseado no seu saldo de ${cliente.saldo}, o melhor investimento é o ${inv.produto}, com investimento mínimo de ${inv.minimo} e com rentabilidade de ${inv.rentabilidade}.`\n  }));\n\n  const mensagemEscolhida = mensagens.length > 0\n    ? mensagens.reduce((maior, atual) =>\n        atual.minimo > maior.minimo ? atual : maior\n      )\n    : null;\n\n  return {\n    json: {\n      possibilidades: {\n        nome: cliente.nome,\n        email: cliente.email,\n        saldo: cliente.saldo,\n        perfil: cliente.perfil,\n        mensagens,\n        mensagemEscolhida\n      }\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        -32
+      ],
+      "id": "58165ed6-9b81-4753-8b25-4cece3b2dd06",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const resposta = $input.first().json;\nconst texto = resposta.data ?? resposta.body;\n\nif (typeof texto !== \"string\") {\n  throw new Error(\"A resposta do CSV não é um texto.\");\n}\n\nconst linhas = texto\n  .replace(/^\\uFEFF/, \"\")\n  .trim()\n  .split(/\\r?\\n/);\n\nif (linhas.length < 2) {\n  throw new Error(\"O CSV não contém registros.\");\n}\n\n// Detecta o separador do cabeçalho\nconst separador = linhas[0].includes(\";\") ? \";\" : \",\";\n\n// Normaliza os nomes das colunas\nconst cabecalhos = linhas[0]\n  .split(separador)\n  .map(campo =>\n    campo.trim()\n      .replace(/^[\"']|[\"']$/g, \"\")\n      .toLowerCase()\n      .normalize(\"NFD\")\n      .replace(/[\\u0300-\\u036f]/g, \"\")\n  );\n\nconst investimentos = linhas.slice(1)\n  .filter(linha => linha.trim() !== \"\")\n  .map((linha, indice) => {\n    const valores = linha.split(separador)\n      .map(valor =>\n        valor.trim().replace(/^[\"']|[\"']$/g, \"\")\n      );\n\n    const registro = Object.fromEntries(\n      cabecalhos.map((campo, i) => [\n        campo,\n        valores[i] ?? \"\"\n      ])\n    );\n\n    // Aceita cabeçalhos alternativos\n    const perfil = registro.perfil;\n    const produto = registro.produto;\n    const minimo = registro.minimo;\n    const rentabilidade = registro.rentabilidade;\n\n    if (\n      perfil === undefined ||\n      produto === undefined ||\n      minimo === undefined ||\n      rentabilidade === undefined\n    ) {\n      throw new Error(\n        `Verifique os cabeçalhos do CSV na linha ${indice + 2}.`\n      );\n    }\n\n    return {\n      perfil,\n      produto,\n      minimo: minimo === \"\" ? \"\" : Number(minimo),\n      rentabilidade: String(rentabilidade)\n    };\n  });\n\nreturn [\n  {\n    json: {\n      investimentos\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "99eccd3a-52c2-4060-b510-76967cfc862c",
+      "name": "Normalizando csv"
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "localhost:5678",
+            "user-agent": "python-requests/2.34.2",
+            "accept-encoding": "gzip, deflate",
+            "accept": "*/*",
+            "connection": "keep-alive",
+            "content-length": "1047",
+            "content-type": "application/json"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "clientes": [
+              {
+                "nome": "Ana Silva",
+                "email": "ana@email.com",
+                "saldo": "R$ 12.500,00",
+                "perfil": "Conservador"
+              },
+              {
+                "nome": "Bruno Lima",
+                "email": "bruno@email.com",
+                "saldo": "R$ 3.200,00",
+                "perfil": "Moderado"
+              },
+              {
+                "nome": "Carla Souza",
+                "email": "carla@email.com",
+                "saldo": "R$ 28.900,00",
+                "perfil": "Arrojado"
+              },
+              {
+                "nome": "Daniel Oliveira",
+                "email": "daniel@email.com",
+                "saldo": "R$ 850,00",
+                "perfil": "Conservador"
+              },
+              {
+                "nome": "Elena Rodrigues",
+                "email": "elena@email.com",
+                "saldo": "R$ 45.000,00",
+                "perfil": "Arrojado"
+              },
+              {
+                "nome": "Felipe Santos",
+                "email": "felipe@email.com",
+                "saldo": "R$ 7.800,00",
+                "perfil": "Moderado"
+              },
+              {
+                "nome": "Gabriela Costa",
+                "email": "gabriela@email.com",
+                "saldo": "R$ 1.500,00",
+                "perfil": "Conservador"
+              },
+              {
+                "nome": "Henrique Alves",
+                "email": "henrique@email.com",
+                "saldo": "R$ 22.300,00",
+                "perfil": "Moderado"
+              },
+              {
+                "nome": "Isabela Martins",
+                "email": "isabela@email.com",
+                "saldo": "R$ 500,00",
+                "perfil": "Conservador"
+              },
+              {
+                "nome": "João Pereira",
+                "email": "joao@email.com",
+                "saldo": "R$ 15.000,00",
+                "perfil": "Arrojado"
+              }
+            ]
+          },
+          "webhookUrl": "http://localhost:5678/webhook-test/listarclientes",
+          "executionMode": "test"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ],
+    "Normalizando csv": [
+      {
+        "json": {
+          "investimentos": [
+            {
+              "perfil": "Conservador",
+              "produto": "Poupança",
+              "minimo": 100,
+              "rentabilidade": "6.2%"
+            },
+            {
+              "perfil": "Conservador",
+              "produto": "CDB Liquidez Diária",
+              "minimo": 1000,
+              "rentabilidade": "12.5%"
+            },
+            {
+              "perfil": "Conservador",
+              "produto": "Tesouro Selic",
+              "minimo": 500,
+              "rentabilidade": "13.0%"
+            },
+            {
+              "perfil": "Moderado",
+              "produto": "CDB Prefixado",
+              "minimo": 1000,
+              "rentabilidade": "14.0%"
+            },
+            {
+              "perfil": "Moderado",
+              "produto": "Fundo Multimercado",
+              "minimo": 5000,
+              "rentabilidade": "16.0%"
+            },
+            {
+              "perfil": "Moderado",
+              "produto": "Tesouro IPCA+",
+              "minimo": 1000,
+              "rentabilidade": "IPCA+6.0%"
+            },
+            {
+              "perfil": "Arrojado",
+              "produto": "Ações ETF",
+              "minimo": 500,
+              "rentabilidade": "Variável"
+            },
+            {
+              "perfil": "Arrojado",
+              "produto": "Fundo de Ações",
+              "minimo": 10000,
+              "rentabilidade": "Variável"
+            },
+            {
+              "perfil": "Arrojado",
+              "produto": "Criptomoedas",
+              "minimo": 100,
+              "rentabilidade": "Variável"
+            }
+          ]
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook": {
+      "main": [
+        []
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Normalizando csv",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizando csv": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "timezone": "America/Sao_Paulo",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "0dc6b62e-a711-4acf-a8ba-8c00e358cc4e",
+  "meta": {
+    "instanceId": "2a5d6dcec2c2d9f344e8e92d0c024cb019661480f1ad22dd5a706b905222c844"
+  },
+  "nodeGroups": [],
+  "id": "bJAMpdy262CBFBAQ",
+  "tags": []
+}

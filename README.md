@@ -21,3 +21,7 @@ Neste projeto, desenvolvi um pipeline automatizado de ponta a ponta que simula u
 - Compreensão prática de arquitetura de redes entre ambientes locais (`localhost`) e serviços em nuvem.
 - Integração de sistemas heterogêneos via Webhooks e consumo de APIs REST.
 - Manipulação e tratamento de arquivos tabulares (CSV) consumidos externamente via requisição HTTP.
+
+## Imagem do Fluxo funcionando ##
+<img width="1920" height="917" alt="image" src="https://github.com/user-attachments/assets/6c307589-387b-4b1f-a2d5-873e24d309ce" />
+
